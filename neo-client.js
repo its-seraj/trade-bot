@@ -46,10 +46,10 @@ class NeoClient {
 
   setSession({ sid, auth }) { this.sid = sid; this.auth = auth; }
 
-  async getScripDetails(symbols) {
-    const joined = Array.isArray(symbols) ? symbols.join(",") : symbols;
+  async getScripDetails(symbol) {
+    const joined = Array.isArray(symbol) ? symbol.join(",") : symbol;
     const res = await axios.get(
-      `${DATA_BASE}/script-details/1.0/quotes/neosymbol/${encodeURIComponent(joined)}/scrip_details`,
+      `${DATA_BASE}/script-details/1.0/quotes/neosymbol/${encodeURIComponent(joined)}/all`,
       { headers: this._dataHeaders() }
     );
     return res.data;
@@ -57,6 +57,11 @@ class NeoClient {
 
   async getPositions() {
     const res = await axios.get(`${DATA_BASE}/quick/user/positions`, { headers: this._dataHeaders() });
+    return res.data;
+  }
+
+  async getOrders() {
+    const res = await axios.get(`${DATA_BASE}/quick/user/orders`, { headers: this._dataHeaders() });
     return res.data;
   }
 

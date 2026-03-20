@@ -29,12 +29,9 @@ console.error = (...args) => printWithSticky(origError, args);
 // ─── Runtime state ────────────────────────────────────────────────────────────
 
 const state = {
-  symbols: (process.env.SYMBOL || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean),
-  instrumentTokens: (process.env.INSTRUMENT_TOKEN || "").split(",").map((t) => t.trim()),
-  exchangeSegment: process.env.EXCHANGE_SEGMENT || "mcx_fo",
+  symbol: process.env.SYMBOL,
+  instrumentTokens: process.env.INSTRUMENT_TOKEN,
+  exchangeSegment: process.env.EXCHANGE_SEGMENT,
   product: process.env.PRODUCT || "NRML",
   orderType: process.env.ORDER_TYPE || "L",
   transactionType: process.env.TRANSACTION_TYPE || "B",
@@ -90,7 +87,6 @@ async function authenticate(client) {
     return;
   }
 
-  process.stdout.write("\n=== Kotak Neo Login ===\n");
   const totp = await rawPrompt("Enter TOTP: ");
   process.stdout.write("[Auth] Step 1 — tradeApiLogin ... ");
   await client.login(totp);
@@ -104,26 +100,22 @@ async function authenticate(client) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function buildTraders(client) {
-  return state.symbols.map((symbol, i) => {
-    const instrumentToken = state.instrumentTokens[i] ?? state.instrumentTokens[0] ?? "";
-    return new Trader({
-      client,
-      symbol,
-      instrumentToken,
-      exchangeSegment: state.exchangeSegment,
-      product: state.product,
-      orderType: state.orderType,
-      transactionType: state.transactionType,
-      quantity: state.quantity,
-      priceDiffThreshold: state.priceDiffThreshold,
-    });
+function buildTrader(client) {
+  return new Trader({
+    client,
+    symbol: state.symbol,
+    exchangeSegment: state.exchangeSegment,
+    product: state.product,
+    orderType: state.orderType,
+    transactionType: state.transactionType,
+    quantity: state.quantity,
+    priceDiffThreshold: state.priceDiffThreshold,
   });
 }
 
 function printState() {
   console.log("─── Current Settings ────────────────────────────────");
-  console.log(`  Symbols:    ${state.symbols.join(", ") || "(none)"}`);
+  console.log(`  Symbol:     ${state.symbol}`);
   console.log(`  Segment:    ${state.exchangeSegment}`);
   console.log(`  Side:       ${state.transactionType === "B" ? "BUY" : "SELL"}`);
   console.log(`  Order type: ${state.orderType}  Product: ${state.product}  Qty: ${state.quantity}`);
@@ -132,13 +124,13 @@ function printState() {
   console.log("─────────────────────────────────────────────────────");
 }
 
-async function runOnce(traders) {
-  await Promise.allSettled(traders.map((t) => t.tick().catch((err) => console.error(`[${t.symbol}] Tick error: ${err.message}`))));
+async function runOnce(trader) {
+  await trader.tick();
 }
 
 // ─── /set command ─────────────────────────────────────────────────────────────
 
-async function runSetCommand(client, intervalRef, tradersRef) {
+async function runSetCommand(client, intervalRef, traderRef) {
   clearInterval(intervalRef.id);
   intervalRef.id = null;
 
@@ -160,16 +152,16 @@ async function runSetCommand(client, intervalRef, tradersRef) {
       if (field !== "done") {
         switch (field) {
           case "symbol": {
-            const sym = await rawPrompt("\n  Current Symbol: " + state.symbols + "\n  Enter New Symbol: ");
+            const sym = await rawPrompt("\n  Current Symbol: " + state.symbol + "\n  Enter New Symbol: ");
             if (sym) {
-              state.symbols = [sym.trim()];
+              state.symbol = [sym.trim()];
             }
             break;
           }
           case "segment":
             state.exchangeSegment = await selectPrompt("Exchange segment", [
-              { name: "NSE F&O  (nse_fo)", value: "nse_fo" },
               { name: "MCX F&O  (mcx_fo)", value: "mcx_fo" },
+              { name: "NSE F&O  (nse_fo)", value: "nse_fo" },
             ]);
             break;
           case "transactionType":
@@ -213,13 +205,13 @@ async function runSetCommand(client, intervalRef, tradersRef) {
   printState();
   console.log("[/set] Polling resumed.");
 
-  tradersRef.traders = buildTraders(client);
-  intervalRef.id = setInterval(() => runOnce(tradersRef.traders), state.pollIntervalMs);
+  traderRef.trader = buildTrader(client);
+  intervalRef.id = setInterval(() => runOnce(traderRef.trader), state.pollIntervalMs);
 }
 
 // ─── Input loop ───────────────────────────────────────────────────────────────
 
-function startInputLoop(client, intervalRef, tradersRef) {
+function startInputLoop(client, intervalRef, traderRef) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: "> " });
   currentRl = rl;
   rl.resume(); // Ensure the input stream is unpaused
@@ -233,8 +225,8 @@ function startInputLoop(client, intervalRef, tradersRef) {
     if (cmd === "/set") {
       isAppClosing = false;
       rl.close(); // Close BEFORE running prompts so Inquirer doesn't conflict
-      await runSetCommand(client, intervalRef, tradersRef);
-      startInputLoop(client, intervalRef, tradersRef);
+      await runSetCommand(client, intervalRef, traderRef);
+      startInputLoop(client, intervalRef, traderRef);
     } else if (cmd === "/status") {
       printState();
       currentRl = rl;
@@ -279,32 +271,32 @@ async function main() {
   await authenticate(client);
 
   state.exchangeSegment = await selectPrompt("Select exchange segment to trade", [
-    { name: "NSE F&O  (nse_fo)", value: "nse_fo" },
     { name: "MCX F&O  (mcx_fo)", value: "mcx_fo" },
+    { name: "NSE F&O  (nse_fo)", value: "nse_fo" },
   ]);
   process.stdout.write(`  → Selected: ${state.exchangeSegment}\n\n`);
 
-  if (state.symbols.length === 0) {
+  if (state.symbol.length === 0) {
     process.stderr.write("ERROR: No SYMBOL configured in .env\n");
     process.exit(1);
   }
 
-  const tradersRef = { traders: [] };
+  const traderRef = { trader: [] };
   const intervalRef = { id: null };
 
-  tradersRef.traders = buildTraders(client);
+  traderRef.trader = buildTrader(client);
 
   // First tick immediately
-  await runOnce(tradersRef.traders);
+  await runOnce(traderRef.trader);
 
   printState();
   console.log("Ready. Type /set to change settings, /status to view config.");
 
   // Start polling
-  intervalRef.id = setInterval(() => runOnce(tradersRef.traders), state.pollIntervalMs);
+  intervalRef.id = setInterval(() => runOnce(traderRef.trader), state.pollIntervalMs);
 
   // Start reading commands
-  startInputLoop(client, intervalRef, tradersRef);
+  startInputLoop(client, intervalRef, traderRef);
 }
 
 main().catch((err) => {
