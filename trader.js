@@ -22,8 +22,8 @@ class Trader {
       this.instrumentToken = fetchedInstrumentToken;
     }
     const scripData = await this.client.getScripDetails(`${this.exchangeSegment}|${this.instrumentToken}`);
-    console.log(scripData[0].depth);
-    const { ltp, bestBid, bestAsk} = this._parseScripDetails(scripData);
+    if (!scripData) return;
+    const { ltp, bestBid, bestAsk } = this._parseScripDetails(scripData);
 
     if (!ltp) {
       console.warn(`${tag} Could not parse LTP`, JSON.stringify(scripData));
@@ -51,15 +51,36 @@ class Trader {
     }
 
     /* check for pending orders */
-    const orders  = this._parsePositions(await this.client.getOrders());
-    const pendingOrders = orders.find((p) => (p.trdSym || "").includes(this.symbol) && (p.stat === "pending"));
+    const orders = this._parsePositions(await this.client.getOrders());
+    const pendingOrders = orders.find((p) => (p.trdSym || "").includes(this.symbol) && p.stat === "pending");
+    const rejectedOrders = orders.find((p) => (p.trdSym || "").includes(this.symbol) && p.stat === "rejected");
     if (pendingOrders) {
-      console.log(`${tag} Pending order already exists - qty: ${pendingOrders.brdLtQty || "?"}. No action.`);
-      return;
+      if (pendingOrders.prc >= trigger.orderPrice) {
+        console.log(`${tag} Pending order already exists - qty: ${pendingOrders.brdLtQty || "?"}. No action.`);
+        return;
+      } else if (trigger.triggered && trigger.side === "BID") {
+        /* modify pending order */
+        this._modifyOrder(pendingOrders, trigger.orderPrice + 0.1);
+      }
+    } else if (rejectedOrders) {
+      if (rejectedOrders.rejRsn?.includes("Circuit breach")) {
+        /* check for trigger */
+        let newBid = rejectedOrders.rejRsn?.match(/Low Price Range:(\d+(\.\d+)?)/);
+        newBid = newBid ? parseFloat(newBid[1]) : null;
+        const trigger2 = this._evaluateTrigger(newBid + this.priceDiffThreshold + 0.1, newBid, bestAsk);
+        if (!trigger2.triggered) {
+          console.log(`${tag} Diff below threshold (${this.priceDiffThreshold}). No action.`);
+          return;
+        }
+        trigger.orderPrice = newBid;
+      } else {
+        console.log(`${tag} Rejected order already exists - qty: ${rejectedOrders.brdLtQty || "?"}. No action.`);
+        return;
+      }
     }
 
     console.log(`${tag} No pending order. Placing ${this.transactionType === "B" ? "BUY" : "SELL"} ${this.orderType} @ ${trigger.orderPrice + 0.1}...`);
-    await this._placeOrder(trigger.orderPrice + 0.1);
+    await this._placeOrder(parseFloat(trigger.orderPrice + 0.1));
   }
 
   _getInstrumentToken = async () => {
@@ -81,7 +102,7 @@ class Trader {
         } else {
           process.stdout.write(`\rDownloading Daily Scrip Master... ${progressEvent.loaded} bytes`);
         }
-      }
+      },
     });
     console.log("\nDownloaded Daily Scrip Master.");
     const rows = response.data.split("\n");
@@ -103,7 +124,7 @@ class Trader {
   _evaluateTrigger(ltp, bestBid, bestAsk) {
     const bidDiff = bestBid !== null ? Math.abs(ltp - bestBid) : 0;
     const askDiff = bestAsk !== null ? Math.abs(ltp - bestAsk) : 0;
-    if (bidDiff > this.priceDiffThreshold) return { triggered: true, side: "BID", orderPrice: bestBid, diff: bidDiff };
+    if (bestBid < ltp && bidDiff > this.priceDiffThreshold) return { triggered: true, side: "BID", orderPrice: bestBid, diff: bidDiff };
     /* enable in future */
     // if (askDiff > this.priceDiffThreshold) return { triggered: true, side: "ASK", orderPrice: bestAsk, diff: askDiff };
     return { triggered: false, side: null, orderPrice: null, diff: 0 };
@@ -111,39 +132,54 @@ class Trader {
 
   async _placeOrder(price) {
     try {
+      /* calculate quanity based on lot size */
+      let totalQuantity = this.quantity;
+      if (this.symbol.includes("NIFTY")) {
+        totalQuantity *= 65;
+      } else if (this.symbol.includes("CRUDEOIL")) {
+        totalQuantity *= 100;
+      } else if (this.symbol.includes("NATURALGAS")) {
+        totalQuantity *= 1250;
+      }
       const res = await this.client.placeOrder({
         exchangeSegment: this.exchangeSegment,
         product: this.product,
         orderType: this.orderType,
-        quantity: this.quantity,
+        quantity: totalQuantity,
         tradingSymbol: this.symbol,
         transactionType: this.transactionType,
         price,
-        instrumentToken: this.instrumentToken,
       });
       const orderId = res?.data?.nOrdNo || res?.nOrdNo || res?.ordNo;
       console.log(`[${this.symbol}] Order placed — id: ${orderId}`);
       if (orderId) this._pendingOrder = { id: orderId, price };
     } catch (err) {
-      console.error(`[${this.symbol}] Place order failed: ${err.response?.data || err.message}`);
+      console.error(`[${this.symbol}] Place order failed: ${(err?.toString(), err?.message, JSON.stringify(err.response?.data))}`);
     }
   }
 
   async _modifyOrder(pending, newPrice) {
     try {
+      /* calculate quanity based on lot size */
+      let totalQuantity = this.quantity;
+      if (this.symbol.includes("NIFTY")) {
+        totalQuantity *= 65;
+      } else if (this.symbol.includes("CRUDEOIL")) {
+        totalQuantity *= 100;
+      } else if (this.symbol.includes("NATURALGAS")) {
+        totalQuantity *= 1250;
+      }
       await this.client.modifyOrder({
-        orderId: pending.id,
         exchangeSegment: this.exchangeSegment,
         product: this.product,
         orderType: this.orderType,
-        quantity: this.quantity,
+        quantity: totalQuantity,
         tradingSymbol: this.symbol,
         transactionType: this.transactionType,
-        price: newPrice,
-        instrumentToken: this.instrumentToken,
+        price,
+        orderNo: pending.nOrdNo
       });
       console.log(`[${this.symbol}] Order modified to ${newPrice}`);
-      this._pendingOrder.price = newPrice;
     } catch (err) {
       console.error(`[${this.symbol}] Modify order failed: ${err.response?.data || err.message}`);
     }

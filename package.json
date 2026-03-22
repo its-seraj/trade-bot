@@ -10,6 +10,7 @@
   "dependencies": {
     "@inquirer/select": "^3.0.0",
     "axios": "^1.7.2",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "qs": "^6.15.0"
   }
 }

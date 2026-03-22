@@ -287,7 +287,7 @@ async function main() {
   traderRef.trader = buildTrader(client);
 
   // First tick immediately
-  await runOnce(traderRef.trader);
+  // await runOnce(traderRef.trader);
 
   printState();
   console.log("Ready. Type /set to change settings, /status to view config.");
