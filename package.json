@@ -5,12 +5,19 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "build": "esbuild index.js --bundle --platform=node --outfile=bin/index.js"
+  },
+  "bin": {
+    "trade": "bin/index.js"
   },
   "dependencies": {
     "@inquirer/select": "^3.0.0",
     "axios": "^1.7.2",
     "dotenv": "^16.4.5",
     "qs": "^6.15.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.4"
   }
 }
