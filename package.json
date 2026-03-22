@@ -1,5 +1,5 @@
 {
-  "name": "kotak-neo-trader",
+  "name": "@its_seraj/trade",
   "version": "1.0.0",
   "description": "Kotak Neo option trading bot with order book price difference logic",
   "main": "index.js",
